@@ -1,14 +1,16 @@
 package org.example;
 
+import org.example.schedule.ScheduleService;
+import org.example.spring.Factory;
+import org.example.spring.FactoryImpl;
+import org.example.threadPool.MyThreadPool;
+import org.example.threadPool.RejectPolicy;
+
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
-
-import org.example.schedule.ScheduleService;
-import org.example.threadPool.MyThreadPool;
-import org.example.threadPool.RejectPolicy;
 
 //TIP 要<b>运行</b>代码，请按 <shortcut actionId="Run"/> 或
 // 点击装订区域中的 <icon src="AllIcons.Actions.Execute"/> 图标。
@@ -23,9 +25,11 @@ public class Main {
      *
      * @param args
      */
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
+        Factory factory = new FactoryImpl();
+        factory.init("org.example");
 
-        testThreadPool();
+//        testThreadPool();
     }
 
     public static void testThreadPool() {

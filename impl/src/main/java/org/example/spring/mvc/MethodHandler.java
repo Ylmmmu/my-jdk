@@ -1,7 +1,11 @@
 package org.example.spring.mvc;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Data;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -11,16 +15,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
-import org.apache.commons.lang3.AnnotationUtils;
-import org.apache.tomcat.util.json.JSONParser;
-
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
+@Data
 public class MethodHandler {
 
     private Object target;
@@ -29,11 +24,12 @@ public class MethodHandler {
 
     private String path;
 
-    public MethodHandler(Class<?> aClass, Method method) {
-        this.target = aClass;
+    public MethodHandler(Object name, Method method, String path) {
+        this.target = name;
         this.method = method;
-
+        this.path = path;
     }
+
 
     public String handleRequest(HttpServletRequest req, HttpServletResponse resp) throws Exception{
         try {

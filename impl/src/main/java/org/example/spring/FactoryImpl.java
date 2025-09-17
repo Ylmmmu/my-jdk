@@ -1,39 +1,48 @@
 package org.example.spring;
 
 
+import org.apache.catalina.Context;
+import org.apache.catalina.startup.Tomcat;
+import org.apache.commons.lang3.StringUtils;
+import org.example.collection.MyHashMap;
+import org.example.spring.mvc.MethodHandler;
+import org.example.spring.mvc.RequestMapping;
 
-
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.*;
 import java.net.URL;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
-import org.apache.catalina.startup.Tomcat;
-import org.apache.commons.lang3.StringUtils;
-import org.example.collection.MyArrayList;
-import org.example.collection.MyHashMap;
-import org.example.spring.mvc.Controller;
-import org.example.spring.mvc.MethodHandler;
-import org.example.spring.mvc.RequestMapping;
-
 public class FactoryImpl implements Factory {
-    Map<String,Class<?>> map = new MyHashMap<>();
-    Map<String,Object> beanMap = new MyHashMap<>();
-    List<PostProcessor> postProcessors = new MyArrayList<>();
-    Map<String,MethodHandler> route = new MyHashMap<>();
+    Map<String,Class<?>> map = new HashMap<>();
+    Map<String,Object> beanMap = new HashMap<>();
+    List<PostProcessor> postProcessors = new ArrayList<>();
+
+    private static File createTempDir(String prefix) {
+        try {
+            File tempDir = File.createTempFile(prefix + ".", "." + getPort());
+            tempDir.delete();
+            tempDir.mkdir();
+            tempDir.deleteOnExit();
+            return tempDir;
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+        return null;
+    }
+
+    private static int getPort() {
+        return 8989;
+    }
+
 
 
     @Override
@@ -61,20 +70,6 @@ public class FactoryImpl implements Factory {
                         }
 
 
-                        if(aClass.isAnnotationPresent(Controller.class)){
-                            Controller annotation = aClass.getAnnotation(Controller.class);
-                            String path = annotation.path();
-                            for(Method method : aClass.getMethods()){
-                                if(method.isAnnotationPresent(RequestMapping.class)){
-                                    RequestMapping requestMapping = method.getAnnotation(RequestMapping.class);
-                                    String methodPath = requestMapping.path();
-                                    String fullPath = path + methodPath;
-                                    route.put(fullPath,new MethodHandler(aClass,method));
-                                }
-                            }
-                        }
-
-
 
                     } catch (ClassNotFoundException e) {
                         throw new RuntimeException(e);
@@ -97,14 +92,45 @@ public class FactoryImpl implements Factory {
             this.createBean(entry.getKey());
         }
 
+        int port = 8080;
         Tomcat tomcat = new Tomcat();
-        tomcat.setPort(8888);
-        tomcat.addServlet("/", "dispatcher", new HttpServlet(){
+        tomcat.setPort(port);
+        tomcat.getConnector();
+
+        String contextPath = "";
+        String docBase = new File(".").getAbsolutePath();
+        Context context = tomcat.addContext(contextPath, docBase);
+
+        tomcat.addServlet(contextPath, "dispatcherServlet", new HttpServlet(){
+
+            @Override
+            public void init() throws ServletException {
+                FactoryImpl.this.map.forEach(
+                        (name,clazz) -> {
+                            if(clazz.isAnnotationPresent(RequestMapping.class)){
+                                String mainPath =  clazz.getAnnotation(RequestMapping.class).path();
+                                for (Method method : clazz.getDeclaredMethods()) {
+                                    if(method.isAnnotationPresent(RequestMapping.class)){
+                                        String path = mainPath + method.getAnnotation(RequestMapping.class).path();
+                                        route.put(path,new MethodHandler(name,method,path));
+                                    }
+                                }
+                            }
+                        }
+                );
+            }
+
+
+            Map<String, MethodHandler> route = new MyHashMap<>();
+
             @Override
             protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
                 String path = req.getPathInfo();
 
                 MethodHandler methodHandler = route.get(path);
+                if(methodHandler.getTarget() instanceof String){
+                    methodHandler.setTarget(FactoryImpl.this.getBean((String) methodHandler.getTarget()));
+                }
 
                 if (methodHandler != null) {
                     try {
@@ -119,6 +145,7 @@ public class FactoryImpl implements Factory {
                 }
             }
         });
+        context.addServletMappingDecoded("/*", "dispatcherServlet");
         tomcat.start();
         tomcat.getServer().await();
     }
