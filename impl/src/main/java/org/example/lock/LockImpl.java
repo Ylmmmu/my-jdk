@@ -1,8 +1,5 @@
-package myjdk.lock;
+package org.example.lock;
 
-import myjdk.lock.spring.Autowire;
-import myjdk.lock.spring.Component;
-import myjdk.lock.spring.PostConstruct;
 import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
@@ -11,6 +8,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+
+import org.example.spring.PostConstruct;
+
 public class LockImpl implements Lock {
     static Unsafe unsafe;
     static long offset;
