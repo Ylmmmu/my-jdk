@@ -15,6 +15,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.StringUtils;
+
 @Data
 public class MethodHandler {
 
@@ -35,26 +37,37 @@ public class MethodHandler {
         try {
             Parameter[] parameters = method.getParameters();
             List<Object> params = new ArrayList<>();
-            Arrays.stream(parameters).map(
+            Object[] array = Arrays.stream(parameters).map(
                     parameter -> {
                         if (parameter.isAnnotationPresent(RequestBody.class)) {
                             try {
                                 BufferedReader reader = req.getReader();
                                 StringBuilder sb = new StringBuilder();
-                                while (reader.readLine() != null) {
-                                    sb.append(reader.readLine());
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    sb.append(line);
                                 }
                                 ObjectMapper mapper = new ObjectMapper();
                                 return mapper.readValue(sb.toString(), parameter.getType());
                             } catch (Exception e) {
                                 return null;
                             }
-                        }else {
-                            return req.getParameter(parameter.getName());
+                        } else {
+                            String name = parameter.getName();
+                            if (parameter.isAnnotationPresent(RequestParam.class)) {
+                                RequestParam requestParam = parameter.getAnnotation(RequestParam.class);
+                                if (StringUtils.isNoneBlank(requestParam.value())) {
+                                    name = requestParam.value();
+                                }
+                                if (requestParam.required() && req.getParameter(name) == null){
+                                    throw new RuntimeException(name + " 参数不能为空");
+                                }
+                            }
+                            return req.getParameter(name);
                         }
                     }
-            ).collect(Collectors.toList());
-            Object invoke = method.invoke(target, params);
+            ).collect(Collectors.toList()).toArray();
+            Object invoke = method.invoke(target, array);
             ObjectMapper mapper = new ObjectMapper();
             String s = mapper.writeValueAsString(invoke);
             PrintWriter writer = resp.getWriter();

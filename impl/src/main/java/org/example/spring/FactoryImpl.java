@@ -1,52 +1,63 @@
 package org.example.spring;
 
-
-import org.apache.catalina.Context;
-import org.apache.catalina.startup.Tomcat;
-import org.apache.commons.lang3.StringUtils;
-import org.example.collection.MyHashMap;
-import org.example.spring.mvc.MethodHandler;
-import org.example.spring.mvc.RequestMapping;
-
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.*;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
+import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.*;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.AnnotationUtils;
+import org.apache.commons.lang3.ClassUtils;
+import org.apache.commons.lang3.StringUtils;
 
 public class FactoryImpl implements Factory {
     Map<String,Class<?>> map = new HashMap<>();
     Map<String,Object> beanMap = new HashMap<>();
     List<PostProcessor> postProcessors = new ArrayList<>();
 
-    private static File createTempDir(String prefix) {
-        try {
-            File tempDir = File.createTempFile(prefix + ".", "." + getPort());
-            tempDir.delete();
-            tempDir.mkdir();
-            tempDir.deleteOnExit();
-            return tempDir;
-        } catch (IOException ex) {
-            ex.printStackTrace();
-        }
-        return null;
+    private static Object instance(Class<?> value) throws Exception {
+        Constructor<?> constructor = value.getConstructor();
+        Object o = constructor.newInstance();
+        return o;
     }
-
-    private static int getPort() {
-        return 8989;
-    }
-
-
 
     @Override
     public void init(String packageName) throws Exception{
+        scanPkg(packageName);
+        initBeanPostProcessor();
+        initRemainingBean();
+    }
+
+    private void initRemainingBean() {
+        map.forEach((key, value) -> this.createBean(key));
+    }
+
+    private void initBeanPostProcessor() {
+        map.entrySet().stream().filter(entry -> PostProcessor.class.isAssignableFrom(entry.getValue()))
+                .map(entry -> this.createBean(entry.getKey())).map(PostProcessor.class::cast)
+                .forEach(postProcessors::add);
+    }
+
+    private void scanPkg(String packageName) throws URISyntaxException, IOException {
         String replace = packageName.replace(".", File.separator);
         URL resource = this.getClass().getClassLoader().getResource(replace);
         Path path = Paths.get(resource.toURI());
@@ -59,7 +70,7 @@ public class FactoryImpl implements Factory {
                     Class<?> aClass;
                     try {
                         aClass = Class.forName(name);
-                        if(aClass.isAnnotationPresent(Component.class)){
+                        if(aClass.isAnnotationPresent(Component.class) &&  !(java.lang.reflect.Modifier.isAbstract(aClass.getModifiers()) || aClass.isInterface())){
                             Component annotation = aClass.getAnnotation(Component.class);
                             String beanName = annotation.name();
                             if(StringUtils.isBlank(beanName)){
@@ -69,8 +80,6 @@ public class FactoryImpl implements Factory {
                             System.out.println(file);
                         }
 
-
-
                     } catch (ClassNotFoundException e) {
                         throw new RuntimeException(e);
                     }
@@ -79,75 +88,6 @@ public class FactoryImpl implements Factory {
                 return FileVisitResult.CONTINUE;
             }
         });
-
-        for (Map.Entry<String,Class<?>> entry : map.entrySet()){
-            if (PostProcessor.class.isAssignableFrom(entry.getValue())) {
-                Object bean = this.createBean(entry.getKey());
-                postProcessors.add((PostProcessor) bean);
-            }
-        }
-
-
-        for(Map.Entry<String,Class<?>> entry : map.entrySet()){
-            this.createBean(entry.getKey());
-        }
-
-        int port = 8080;
-        Tomcat tomcat = new Tomcat();
-        tomcat.setPort(port);
-        tomcat.getConnector();
-
-        String contextPath = "";
-        String docBase = new File(".").getAbsolutePath();
-        Context context = tomcat.addContext(contextPath, docBase);
-
-        tomcat.addServlet(contextPath, "dispatcherServlet", new HttpServlet(){
-
-            @Override
-            public void init() throws ServletException {
-                FactoryImpl.this.map.forEach(
-                        (name,clazz) -> {
-                            if(clazz.isAnnotationPresent(RequestMapping.class)){
-                                String mainPath =  clazz.getAnnotation(RequestMapping.class).path();
-                                for (Method method : clazz.getDeclaredMethods()) {
-                                    if(method.isAnnotationPresent(RequestMapping.class)){
-                                        String path = mainPath + method.getAnnotation(RequestMapping.class).path();
-                                        route.put(path,new MethodHandler(name,method,path));
-                                    }
-                                }
-                            }
-                        }
-                );
-            }
-
-
-            Map<String, MethodHandler> route = new MyHashMap<>();
-
-            @Override
-            protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-                String path = req.getPathInfo();
-
-                MethodHandler methodHandler = route.get(path);
-                if(methodHandler.getTarget() instanceof String){
-                    methodHandler.setTarget(FactoryImpl.this.getBean((String) methodHandler.getTarget()));
-                }
-
-                if (methodHandler != null) {
-                    try {
-                        // 调用控制器方法并返回结果
-                        String view = methodHandler.handleRequest(req, resp);
-
-                    } catch (Exception e) {
-                        resp.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, e.getMessage());
-                    }
-                } else {
-                    resp.sendError(HttpServletResponse.SC_NOT_FOUND, "404 Not Found");
-                }
-            }
-        });
-        context.addServletMappingDecoded("/*", "dispatcherServlet");
-        tomcat.start();
-        tomcat.getServer().await();
     }
 
     private Object createBean(String key) {
@@ -156,48 +96,55 @@ public class FactoryImpl implements Factory {
         }
         try {
             Class<?> value = map.get(key);
-
-            Constructor<?> constructor = value.getConstructor(null);
-            Object o = constructor.newInstance();
-            // beanInfo 里的一个标识 判断是否需要代理
-            boolean flag = true;
-            // beanInfo 里的信息 有哪些切面信息
-            Object o1 = o;
-            if (flag){
-                o1 = Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(), value.getInterfaces(),new MyIvocationHandler(o));
-            }
-            beanMap.put(key,o1);
-
-
-            Field[] fields = value.getDeclaredFields();
-            List<Field> autowiredField = Arrays.stream(fields).filter(field -> field.isAnnotationPresent(Autowire.class)).collect(Collectors.toList());
-            for (Field field : autowiredField) {
-                field.setAccessible(true);
-                field.set(o, this.getBean(field.getType()));
-            }
-
-
-            for(PostProcessor postProcessor : postProcessors){
-                o = postProcessor.postProcessBeforeInitialization(o);
-            }
-
-
-            Optional<Method> first = Arrays.stream(value.getDeclaredMethods()).filter(m -> m.isAnnotationPresent(PostConstruct.class)).findFirst();
-            if(first.isPresent()){
-                first.get().setAccessible(true);
-                first.get().invoke(o);
-            }
-
-            for(PostProcessor postProcessor : postProcessors){
-                o = postProcessor.postProcessAfterInitialization(o);
-            }
-
-
+            Object o = instance(value);
+            Object o1 = wrapIfNecessary(o, value);
+            beanMap.put(key, o1);
+            populateBean(value, o);
+            initBean(o, value);
             return o1;
-        } catch (NoSuchMethodException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
+
         }
     }
+
+    private Object wrapIfNecessary(Object o, Class<?> value) {
+        boolean flag = false;
+        Object o1 = o;
+        if (flag) {
+            o1 = Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(), value.getInterfaces(),
+                    new MyIvocationHandler(o));
+        }
+        return o1;
+    }
+
+    private void populateBean(Class<?> value, Object o) throws IllegalAccessException {
+        Field[] fields = value.getDeclaredFields();
+        List<Field> autowiredField = Arrays.stream(fields).filter(field -> field.isAnnotationPresent(Autowired.class))
+                .collect(Collectors.toList());
+        for (Field field : autowiredField) {
+            field.setAccessible(true);
+            field.set(o, this.getBean(field.getType()));
+        }
+    }
+
+    private Object initBean(Object o, Class<?> value) throws IllegalAccessException, InvocationTargetException {
+        for (PostProcessor postProcessor : postProcessors) {
+            o = postProcessor.postProcessBeforeInitialization(o);
+        }
+        Optional<Method> first =
+                Arrays.stream(value.getDeclaredMethods()).filter(m -> m.isAnnotationPresent(PostConstruct.class))
+                        .findFirst();
+        if (first.isPresent()) {
+            first.get().setAccessible(true);
+            first.get().invoke(o);
+        }
+        for (PostProcessor postProcessor : postProcessors) {
+            o = postProcessor.postProcessAfterInitialization(o);
+        }
+        return o;
+    }
+
     class MyIvocationHandler implements InvocationHandler {
         public Object target;
         public MyIvocationHandler(Object target) {
@@ -207,15 +154,12 @@ public class FactoryImpl implements Factory {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if(method.getName().equals("toString")){
-
                 return proxy.getClass().getName();
             }
             method.setAccessible(true);
             return method.invoke(target, args);
         }
     }
-
-
 
     @Override
     public Object getBean(String name)  {

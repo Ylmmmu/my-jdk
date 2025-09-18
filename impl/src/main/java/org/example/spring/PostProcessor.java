@@ -1,7 +1,11 @@
 package org.example.spring;
 
 public interface PostProcessor {
-    Object postProcessBeforeInitialization(Object bean);
+    default Object postProcessBeforeInitialization(Object bean){
+        return bean;
+    }
 
-    Object postProcessAfterInitialization(Object bean);
+    default Object postProcessAfterInitialization(Object bean){
+        return bean;
+    }
 }
